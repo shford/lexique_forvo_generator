@@ -4,12 +4,12 @@ Note 1: The formatting for adjectives and nouns is surprisingly inconvenient to 
         It would require a lot of duplicate code so in format_noun_declension_adj() we actually
         may format_noun_declension_nom(). The adjective does not magically become a noun. I just
         didn't want to abstract out the rows 2 & 3 special cases (thanks French) and corrective logic.
-        Likewise if you see a ["cgram"] == "adj" inside the _nom() then now you know it's just there
+        Likewise if you see a ["cgram"] == 'adj' inside the _nom() then now you know it's just there
         for this. Sorry eh.
 
 Note 2: The Lexique 3.83 excel was already sorted such that nombre 's' came prior to "p".
         I doubt that'll change but if this breaks for future versions then it be worth adding
-        a quick sort (not quicksort) to do that within the POS for each lemme.
+        a quick sort (not actually quicksort, jeez) to do that within the POS for each lemme.
 
 """
 import os
@@ -19,27 +19,28 @@ import numpy as np
 import pandas as pd
 
 # TODO
-#   - b/w 2 & 3, fix number of cards
+#   - fix naming discrepancy
+#   - probably should be merged into one giant script
 
 # === Configuration variables ===
 USER_PATH = os.path.expanduser('~')
-INPUT_CSV = f"{USER_PATH}/Documents/flashcard_project_new/lexique_exported_files/Freq 1-500.csv"
-OUTPUT_DIR = f"{USER_PATH}/Documents/flashcard_project_new/anki_lexique_imports"
-OUTPUT_PREFIX = "anki_deck_"
+INPUT_CSV = f'{USER_PATH}/Documents/flashcard_project_new/lexique_exported_files/Freq 1 - 500.csv'
+OUTPUT_DIR = f'{USER_PATH}/Documents/flashcard_project_new/anki_lexique_imports'
+OUTPUT_PREFIX = 'anki_deck_'
 CHUNK_SIZE = 500
 
 # === End Config ===
 
 # POS priority for sorting and filtering
-POS_PRIORITY = ["adj", "adv", "pre", "ver", "ono", "nom", "con"]
+POS_PRIORITY = ['adj', 'adv', 'pre', 'ver', 'ono', 'nom', 'con']
 
 # Special lemme sets for formatting exceptions
-HARD_CODED_BOLD = {"quelques", "quelque"}
+HARD_CODED_BOLD = {'quelques', 'quelque'}
 HARD_CODED_ADJ_4_ROWS = {
-    "tout", "toute", "tous", "toutes",
-    "aucun", "aucune", "aucuns", "aucunes",
+    'tout', 'toute', 'tous', 'toutes',
+    'aucun', 'aucune', 'aucuns', 'aucunes',
 }
-SPECIAL_LEMME_FOIS = "fois"
+SPECIAL_LEMME_FOIS = 'fois'
 
 
 def main():
@@ -47,7 +48,6 @@ def main():
 
     # load pandas
     df = pd.read_csv(INPUT_CSV)
-    df.columns = [c.lower() for c in df.columns]
 
     # calculate starting frequency index from filename
     freq_start = parse_start_frequency(INPUT_CSV)
@@ -56,61 +56,39 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # create a set of {"lemme1":[row_A, row_B], "lemme2":[row_X,...]} & ["lemme1", "lemme2", ...]
-    unique_lemmes = []
-    lemme_to_rows = {}
-
-    for idx, row in df.iterrows():
-        lemme = row["lemme"]
-        if lemme not in lemme_to_rows:
-            lemme_to_rows[lemme] = []
-            unique_lemmes.append(lemme)
-        lemme_to_rows[lemme].append(row)
+    lemmes, lemme_to_rows = group_rows_by_lemme(df)
 
     # process lemme in chunks of CHUNK_SIZE
-    for chunk_idx in range(0, len(unique_lemmes), CHUNK_SIZE):
-        lemmes = unique_lemmes[chunk_idx : chunk_idx + CHUNK_SIZE]
-
-        # prepare list for export rows
+    for chunk_idx in range(0, len(lemmes), CHUNK_SIZE):
         export_rows = []
+        lemme_chunk = lemmes[chunk_idx : chunk_idx + CHUNK_SIZE]
 
-        for lemme in lemmes:
-            rows_list = lemme_to_rows[lemme]
-            subset = pd.DataFrame(rows_list)
-
-            # add a column to rank POS by priorty (see above)
-            for row in rows_list:
-                subset["pos_rank"] = subset["cgram"].apply(
-                    lambda x: POS_PRIORITY.index(x.lower()) if x.lower() in POS_PRIORITY else len(POS_PRIORITY))
-
-            # for this lemme, select only the highest priority POS
-            min_rank = subset["pos_rank"].min()
-            min_lemme_subset = subset[subset["pos_rank"] == min_rank]
-
-            # get POS for formatting
-            pos = min_lemme_subset["cgram"].iloc[0].lower()
+        for lemme in lemme_chunk:
+            lemme_df = pd.DataFrame(lemme_to_rows[lemme])
+            pos = lemme_df['cgram'].iloc[0]
 
             # format 'Noun Declension' field
-            noun_decl = format_noun_declension(min_lemme_subset, pos)
+            noun_decl = format_noun_declension(lemme, lemme_df, pos)
 
             # if formatting fails, print all rows for this lemme and POS with nombre and ortho for debug
             if noun_decl is None:
                 formatting_exception_count += 1
                 print(f"Unhandled case for {lemme}, {pos}")
-                for _, r in min_lemme_subset.iterrows():
-                    ortho_val = r.get("ortho", "NaN")
-                    genre_val = r.get("genre", "NaN")
-                    nombre_val = r.get("nombre", "NaN")
-                    print(f'\tortho: {ortho_val}, genre: {genre_val}, nombre: {nombre_val}')
+                for _, r in lemme_df.iterrows():
+                    ortho_val = r.get('ortho', 'NaN')
+                    genre_val = r.get('genre', 'NaN')
+                    nombre_val = r.get('nombre', 'NaN')
+                    print(f"\tortho: {ortho_val}, genre: {genre_val}, nombre: {nombre_val}")
 
                 # default leave field blank - easier to find and fix by
-                noun_decl = ""
+                noun_decl = ''
 
             # copy orthosyll column to pronunciation column - use matching lemme orthosyll if available
-            pronun_row = min_lemme_subset[min_lemme_subset["ortho"] == lemme]
+            pronun_row = lemme_df[lemme_df['ortho'] == lemme]
             if not pronun_row.empty:
-                pronun = pronun_row["orthosyll"].iloc[0]
+                pronun = pronun_row['orthosyll'].iloc[0]
             else:
-                pronun = min_lemme_subset["orthosyll"].iloc[0]
+                pronun = lemme_df['orthosyll'].iloc[0]
 
             # prepare row for export
             if noun_decl is not False:
@@ -122,13 +100,13 @@ def main():
 
                         # append
                         export_rows.append({
-                            "Lemme": lemme,
-                            "Noun Declension": noun_decl,
-                            "Pronunciation": pronun,
-                            "Sound": "",
-                            "English Meaning": "",
-                            "POS": pos.lower(),
-                            "Tags": "",
+                            'Lemme': lemme,
+                            'Noun Declension': noun_decl,
+                            'Pronunciation': pronun,
+                            'Sound': '',
+                            'English Meaning': '',
+                            'POS': pos.lower(),
+                            'Tags': '',
                         })
                 else:
                     # apply contraction rule to noun_decl
@@ -136,57 +114,76 @@ def main():
 
                     # append
                     export_rows.append({
-                        "Lemme": lemme,
-                        "Noun Declension": noun_decl,
-                        "Pronunciation": pronun,
-                        "Sound": "",
-                        "English Meaning": "",
-                        "POS": pos.lower(),
-                        "Tags": "",
+                        'Lemme': lemme,
+                        'Noun Declension': noun_decl,
+                        'Pronunciation': pronun,
+                        'Sound': '',
+                        'English Meaning': '',
+                        'POS': pos.lower(),
+                        'Tags': '',
                     })
 
         # output file name
         start_idx = freq_start + chunk_idx
-        end_idx = start_idx + len(lemmes) - 1
+        end_idx = start_idx + len(lemme_chunk) - 1
         out_file = os.path.join(
-            OUTPUT_DIR, f"{OUTPUT_PREFIX}{start_idx}-{end_idx}.csv"
+            OUTPUT_DIR, f'{OUTPUT_PREFIX}{start_idx}-{end_idx}.csv'
         )
 
         # Create DataFrame for export
         export_df = pd.DataFrame(export_rows)
 
         # Export CSV with UTF-8 and without index
-        export_df.to_csv(out_file, index=False, encoding="utf-8")
+        export_df.to_csv(out_file, index=False, encoding='utf-8')
 
-        print(f"Formatting exceptions: {formatting_exception_count}\n")
-        print(f"Exported {len(lemmes)} lemme to {out_file}")
+        print(f'Formatting exceptions: {formatting_exception_count}\n')
+        print(f'Exported {len(lemme_chunk)} lemme to {out_file}')
 
+
+def group_rows_by_lemme(df) -> (list, dict):
+    """
+    Create a list of unique lexique lemmes.
+    Create a dict of rows belonging to each lemme.
+    Example:
+        [ "lemme1", "lemme2", "lemme3" ]
+        {"lemme1":[row_A, row_B], "lemme2":[row_C,...]}
+    """
+    unique_lemmes = []
+    lemme_row_lookup = {}
+
+    for idx, row in df.iterrows():
+        lemme = row['lemme']
+        if lemme not in lemme_row_lookup:
+            lemme_row_lookup[lemme] = []
+            unique_lemmes.append(lemme)
+        lemme_row_lookup[lemme].append(row)
+
+    return unique_lemmes, lemme_row_lookup
 
 # Extract frequency start index from filename like 'Freq 1-500.csv
 def parse_start_frequency(filename):
-    match = re.search(r'Freq (\d+)-\d+', filename)
+    match = re.search(r'Freq (\d+) - \d+', filename)
     if not match:
         raise ValueError('Invalid filename: ' + filename + '\n\nFilename is required to match format to accuracately determine frequency index.')
     return int(match.group(1))
 
 # apply correct formatting rule based on pos and lemme.
-def format_noun_declension(rows, pos):
+def format_noun_declension(lemme, lemme_df, pos):
     # we'll just pre-compute this junk. it's a little inefficient but it reduces code complexity
-    lemme = rows["lemme"].iloc[0].lower()
     c_lemme_male = apply_contraction(f"le {lemme}")
     c_lemme_fem = apply_contraction(f"la {lemme}")
 
     # check for hard-coded exceptions first
-    hard_coded_format = handle_hard_coded_formats(rows, lemme, c_lemme_male, c_lemme_fem)
+    hard_coded_format = handle_hard_coded_formats(lemme_df, lemme, c_lemme_male, c_lemme_fem)
     if hard_coded_format is not None or hard_coded_format is False:
         return hard_coded_format
 
-    if pos in {"ver", "adv", "pre", "con", "ono"}:
+    if pos in {'ver', 'adv', 'pre', 'con', 'ono'}:
         return format_bold(lemme)
-    elif pos == "nom":
-        return format_noun_declension_nom(rows, lemme, c_lemme_male, c_lemme_fem)
-    elif "adj" in pos:
-        return format_noun_declension_adj(rows, lemme, c_lemme_male, c_lemme_fem)
+    elif pos == 'nom':
+        return format_noun_declension_nom(lemme_df, lemme, c_lemme_male, c_lemme_fem)
+    elif 'adj' in pos:
+        return format_noun_declension_adj(lemme_df, lemme, c_lemme_male, c_lemme_fem)
 
     # If no rule matched
     return None
@@ -195,28 +192,26 @@ def format_noun_declension(rows, pos):
 # pretty self explanatory
 # note: returning false prevents duplicates from getting exported. DO NOT CHANGE THIS TO None.
 def handle_hard_coded_formats(rows, lemme, c_lemme_male, c_lemme_fem):
-    lower_lemme = lemme.lower()
-
-    if lower_lemme in {"quelque", "quelques"}:
-        if lower_lemme == "quelque":
+    if lemme in {'quelque', 'quelques'}:
+        if lemme == 'quelque':
             return f"<b>quelque</b> [<gr><i>pl. </i></gr>quelques]"
         else:
             return False
 
     # exceptions for archaic/rare poetic spellings
-    elif lower_lemme == "oeil":
+    elif lemme == 'oeil':
         return f"<b>l'oeil</b> [<gr><i>pl. </i></gr><blue>les yeux</blue>]"
-    elif lower_lemme == 'lieu':
+    elif lemme == 'lieu':
         return f"<b>lieu</b> [<gr><i>pl. </i></gr>lieux]"
 
-    elif lower_lemme in HARD_CODED_ADJ_4_ROWS:
-        if lower_lemme == "tout":
+    elif lemme in HARD_CODED_ADJ_4_ROWS:
+        if lemme == 'tout':
             return (f"<b>tout</b> ["
                     f"<gr><i>ms. </i></gr><blue>tout</blue>; "
                     f"<gr><i>mpl. </i></gr><blue>tous</blue>; "
                     f"<gr><i>fs. </i></gr><red>toute</red>; "
                     f"<gr><i>fpl. </i></gr><red>toutes</red>]")
-        if lower_lemme == "aucun":
+        if lemme == 'aucun':
             return (f"<b>aucun</b> ["
                     f"<gr><i>ms. </i></gr><blue>aucun</blue>; "
                     f"<gr><i>mpl. </i></gr><blue>aucuns</blue>; "
@@ -224,8 +219,8 @@ def handle_hard_coded_formats(rows, lemme, c_lemme_male, c_lemme_fem):
                     f"<gr><i>fpl. </i></gr><red>aucunes</red>]")
         else:
             return False
-    if lower_lemme == SPECIAL_LEMME_FOIS:
-        return f"<b>la fois</b> [<gr><i>pl. </i></gr><red><b>les fois</b></red>]"
+    if lemme == SPECIAL_LEMME_FOIS:
+        return '<b>la fois</b> [<gr><i>pl. </i></gr><red><b>les fois</b></red>]'
 
     return None
 
@@ -234,19 +229,19 @@ def format_bold(lemme):
 
 
 # handle 'nom' POS formatting with genre and nombre rules
-# ...and some "adj" stuff that should probably be abstracted
+# ...and some 'adj' stuff that should probably be abstracted
 def format_noun_declension_nom(rows, lemme, c_lemme_male, c_lemme_fem):
     # helper to get row by genre and nombre with NaN checks
     def get_row(genre_val=None, nombre_val=None):
         cond = True
         if genre_val is None:
-            cond &= rows["genre"].isna()
+            cond &= rows['genre'].isna()
         else:
-            cond &= rows["genre"] == genre_val
+            cond &= rows['genre'] == genre_val
         if nombre_val is None:
-            cond &= rows["nombre"].isna()
+            cond &= rows['nombre'].isna()
         else:
-            cond &= rows["nombre"] == nombre_val
+            cond &= rows['nombre'] == nombre_val
         subset = rows[cond]
         return subset.iloc[0] if not subset.empty else None
 
@@ -258,10 +253,9 @@ def format_noun_declension_nom(rows, lemme, c_lemme_male, c_lemme_fem):
         # single row cases
         if len(rows) == 1:
             row = rows.iloc[0]
-            genre = row.get("genre", np.nan)
-            nombre = row.get("nombre", np.nan)
-            lemme = row["lemme"]
-            ortho = row["ortho"]
+            genre = row.get('genre', np.nan)
+            nombre = row.get('nombre', np.nan)
+            ortho = row['ortho']
 
             # assume this means only a plural form exists (e.g. you can have 'pants' but not 'pant')
             if nombre == "p":
@@ -276,26 +270,26 @@ def format_noun_declension_nom(rows, lemme, c_lemme_male, c_lemme_fem):
 
         # two row cases
         elif len(rows) == 2:
-            # infer missing "nombre"
-            if rows["nombre"].isna().sum() == 1:
-                idx = rows[rows["nombre"].isna()].index[0]
-                nombres = rows["nombre"].dropna()
+            # infer missing 'nombre'
+            if rows['nombre'].isna().sum() == 1:
+                idx = rows[rows['nombre'].isna()].index[0]
+                nombres = rows['nombre'].dropna()
                 # if one is singular, then the other must be plural
                 if (nombres == "s").sum() == 1:
-                    rows.at[idx, "nombre"] = "p"
+                    rows.at[idx, 'nombre'] = "p"
                 # if one is plural, then the other must be singular
                 elif (nombres == "p").sum() == 1:
-                    rows.at[idx, "nombre"] = "s"
+                    rows.at[idx, 'nombre'] = "s"
                 else:
                     return None
 
             row1 = rows.iloc[0]
             row2 = rows.iloc[1]
 
-            r1_genre = row1["genre"]
-            r1_nombre = row1["nombre"]
-            r2_genre = row2["genre"]
-            r2_nombre = row2["nombre"]
+            r1_genre = row1['genre']
+            r1_nombre = row1['nombre']
+            r2_genre = row2['genre']
+            r2_nombre = row2['nombre']
 
             """
             Ahh french, there's just this: Je ne sais pas
@@ -316,28 +310,28 @@ def format_noun_declension_nom(rows, lemme, c_lemme_male, c_lemme_fem):
              
              There's a surprising amount of these, roughly 7 / 500. Thanks French. 
             """
-            if pd.isna(row1["genre"]) and pd.isna(row2["genre"]) and r1_nombre == "s" and r2_nombre == "p" and row1["cgram"].lower() != "adj":
-                return [f"<b><blue>{c_lemme_male}</blue></b> [<gr><i>pl. </i></gr><blue>les {row2["ortho"]}</blue>]",
-                        f"<b><red>{c_lemme_fem}</red></b> [<gr><i>pl. </i></gr><red>les {row2["ortho"]}</red>]"]
+            if pd.isna(row1['genre']) and pd.isna(row2['genre']) and r1_nombre == "s" and r2_nombre == "p" and row1["cgram"].lower() != 'adj':
+                return [f"<b><blue>{c_lemme_male}</blue></b> [<gr><i>pl. </i></gr><blue>les {row2['ortho']}</blue>]",
+                        f"<b><red>{c_lemme_fem}</red></b> [<gr><i>pl. </i></gr><red>les {row2['ortho']}</red>]"]
 
-            if pd.isna(row1["genre"]) and pd.isna(row2["genre"]) and r1_nombre == "s" and r2_nombre == "p" and row1["cgram"].lower() == "adj":
-                return f"<b>{lemme}</b> [<gr><i>pl. </i></gr>{row2["ortho"]}]"
+            if pd.isna(row1['genre']) and pd.isna(row2['genre']) and r1_nombre == "s" and r2_nombre == "p" and row1["cgram"].lower() == 'adj':
+                return f"<b>{lemme}</b> [<gr><i>pl. </i></gr>{row2['ortho']}]"
 
             # discard nouns with conflicting genres
             if (r1_genre == "m" and r2_genre == "f") or (r1_genre == "f" and r2_genre == "m"):
                 return None # no rule match
             # treat both rows as male, with first row 's' and second row "p"
             elif r1_genre == "m" or r2_genre == "m":
-                if row1["cgram"].lower() == "adj":
-                    return f"<b>{lemme}</b> [<gr><i>mpl. </i></gr><blue>{row2["ortho"]}</blue>]"
+                if row1["cgram"].lower() == 'adj':
+                    return f"<b>{lemme}</b> [<gr><i>mpl. </i></gr><blue>{row2['ortho']}</blue>]"
                 else:
-                    return f"<b><blue>{c_lemme_male}</blue></b> [<gr><i>pl. </i></gr><blue>les {row2["ortho"]}</blue>]"
+                    return f"<b><blue>{c_lemme_male}</blue></b> [<gr><i>pl. </i></gr><blue>les {row2['ortho']}</blue>]"
             # treat both rows as female, with first row 's' and second row "p"
             elif r1_genre == "f" or r2_genre == "f":
-                if row1["cgram"].lower() == "adj":
-                    return f"<b>{lemme}</b> [<gr><i>fpl. </i></gr><red>{row2["ortho"]}</red>]"
+                if row1["cgram"].lower() == 'adj':
+                    return f"<b>{lemme}</b> [<gr><i>fpl. </i></gr><red>{row2['ortho']}</red>]"
                 else:
-                    return f"<b><red>{c_lemme_fem}</red></b> [<gr><i>pl. </i></gr><red>les {row2["ortho"]}</red>]"
+                    return f"<b><red>{c_lemme_fem}</red></b> [<gr><i>pl. </i></gr><red>les {row2['ortho']}</red>]"
 
         # my voluntary & entirely avoidable suffering is your flashcards
         elif len(rows) == 3:
@@ -353,14 +347,14 @@ def format_noun_declension_nom(rows, lemme, c_lemme_male, c_lemme_fem):
         return None
 
 
-# handle "adj" POS formatting with genre and nombre rules.
-# rows: DataFrame subset for the lemme and POS = "adj"
+# handle 'adj' POS formatting with genre and nombre rules.
+# rows: DataFrame subset for the lemme and POS = 'adj'
 def format_noun_declension_adj(rows, lemme, c_lemme_male, c_lemme_fem):
-    genre_vals = rows["genre"].dropna().unique()
-    nombre_vals = rows["nombre"].dropna().unique()
+    genre_vals = rows['genre'].dropna().unique()
+    nombre_vals = rows['nombre'].dropna().unique()
 
     # if one row OR genre empty and all ortho's are equal then treat as single ver/adv style
-    if len(rows) == 1 or (all(x == lemme for x in rows["ortho"]) and rows["genre"].isna().all()):
+    if len(rows) == 1 or (all(x == lemme for x in rows['ortho']) and rows['genre'].isna().all()):
         return format_bold(lemme)
 
     elif len(rows) == 4:
@@ -383,7 +377,7 @@ def format_noun_declension_adj(rows, lemme, c_lemme_male, c_lemme_fem):
             # one row missing
             if ((ms is not None and mpl is not None and fs is not None) or (ms is not None and mpl is not None and fpl is not None) or (ms is not None and fs is not None and fpl is not None) or (mpl is not None and fs is not None and fpl is not None)):
                 # assign ms|mpl|fs|fpl to row with missing genre/nombre malformed - process of elimination
-                malformed_row = rows[rows["genre"].isna() | rows["nombre"].isna()]
+                malformed_row = rows[rows['genre'].isna() | rows['nombre'].isna()]
                 if ms is not None and mpl is not None and fs is not None:
                     fpl = malformed_row
                 elif ms is not None and mpl is not None and fpl is not None:
@@ -413,51 +407,51 @@ def format_noun_declension_adj(rows, lemme, c_lemme_male, c_lemme_fem):
 
 
 def noun_three(df, lemme, c_lemme_male, c_lemme_fem):
-    rows = df[["ortho", "genre", "nombre", "cgram"]].copy()
+    rows = df[['ortho', 'genre', 'nombre', "cgram"]].copy()
 
     # fail early if too many missing values
-    if rows["nombre"].isna().sum() > 1 or rows["genre"].isna().sum() > 1:
+    if rows['nombre'].isna().sum() > 1 or rows['genre'].isna().sum() > 1:
         return None
 
-    # infer missing "nombre"
-    if rows["nombre"].isna().any():
-        idx = rows[rows["nombre"].isna()].index[0]
-        nombres = rows["nombre"].dropna()
+    # infer missing 'nombre'
+    if rows['nombre'].isna().any():
+        idx = rows[rows['nombre'].isna()].index[0]
+        nombres = rows['nombre'].dropna()
         # if we have 2 singulars, then the other must be plural
         if (nombres == "s").sum() == 2:
-            rows.at[idx, "nombre"] = "p"
+            rows.at[idx, 'nombre'] = "p"
         # if we have 1 singular and 1 plural, then the other must be singular
         elif (nombres == "p").sum() == 1 and (nombres == "s").sum() == 1:
-            rows.at[idx, "nombre"] = "s"
+            rows.at[idx, 'nombre'] = "s"
         else:
             return None
 
-    # infer missing "genre" (only if "nombre" is 's')
-    if rows["genre"].isna().any():
-        idx = rows[rows["genre"].isna()].index[0]
-        if rows.at[idx, "nombre"] == "p":
+    # infer missing 'genre' (only if 'nombre' is 's')
+    if rows['genre'].isna().any():
+        idx = rows[rows['genre'].isna()].index[0]
+        if rows.at[idx, 'nombre'] == "p":
             pass  # genre doesn't matter for plural
         else:
-            other = rows[(rows.index != idx) & (rows["nombre"] == "s")]
-            genres = other["genre"].dropna().unique()
+            other = rows[(rows.index != idx) & (rows['nombre'] == "s")]
+            genres = other['genre'].dropna().unique()
             if len(genres) == 1:
-                rows.at[idx, "genre"] = "f" if genres[0] == "m" else "m"
+                rows.at[idx, 'genre'] = "f" if genres[0] == "m" else "m"
             else:
                 return None
 
     # identify forms
-    masc_sing = rows[(rows["genre"] == "m") & (rows["nombre"] == 's')]
-    fem_sing = rows[(rows["genre"] == "f") & (rows["nombre"] == 's')]
-    plural = rows[rows["nombre"] == "p"]
+    masc_sing = rows[(rows['genre'] == "m") & (rows['nombre'] == 's')]
+    fem_sing = rows[(rows['genre'] == "f") & (rows['nombre'] == 's')]
+    plural = rows[rows['nombre'] == "p"]
 
     if len(masc_sing) != 1 or len(plural) != 1:
         return None
     if len(fem_sing) > 1:
         return None
 
-    ortho_m = masc_sing.iloc[0]["ortho"]
-    ortho_p = plural.iloc[0]["ortho"]
-    ortho_f = fem_sing.iloc[0]["ortho"] if not fem_sing.empty else None
+    ortho_m = masc_sing.iloc[0]['ortho']
+    ortho_p = plural.iloc[0]['ortho']
+    ortho_f = fem_sing.iloc[0]['ortho'] if not fem_sing.empty else None
 
     # if both plural and feminine are the same as masculine, return None
     if (ortho_p == ortho_m) and (ortho_f is None or ortho_f == ortho_m):
@@ -466,17 +460,17 @@ def noun_three(df, lemme, c_lemme_male, c_lemme_fem):
     # only format if both forms differ
     pos = rows.iloc[0]["cgram"].lower()
     if ortho_p != ortho_m and ortho_f and ortho_f != ortho_m:
-        if pos == "adj":
+        if pos == 'adj':
             return f"<b>{lemme}</b> [<gr><i>m. </i></gr><blue>{ortho_m}</blue>; <gr><i>pl. </i></gr><blue>{ortho_p}</blue>; <gr><i>f. </i></gr><red>{ortho_f}</red>]"
         else:
             return f"<b><blue>{c_lemme_male}</blue></b> [<gr><i>pl. </i></gr><blue>les {ortho_p}</blue>; <gr><i>f. </i></gr><red>la {ortho_f}</red>]"
     elif ortho_p != ortho_m and (ortho_f is None or ortho_f == ortho_m):
-        if pos == "adj":
+        if pos == 'adj':
             return f"<b>{lemme}</b> [<gr><i>s. </i></gr><blue>{ortho_m}</blue>; <gr><i>pl. </i></gr><blue>{ortho_p}</blue>]"
         else:
             return f"<b><blue>{c_lemme_male}</blue></b> [<gr><i>pl. </i></gr><blue>les {ortho_p}</blue>]"
     elif ortho_f and ortho_f != ortho_m and ortho_p == ortho_m:
-        if pos == "adj":
+        if pos == 'adj':
             return f"<b>{lemme}</b> [<gr><i>m. </i></gr><blue>{ortho_m}</blue>; <gr><i>pl. </i></gr><blue>{ortho_p}</blue>; <gr><i>f. </i></gr><red>{ortho_f}</red>]"
         else:
             return f"<b><red>{c_lemme_fem}</red></b> [<gr><i>pl. </i></gr><red>les {ortho_p}</red>]"
@@ -486,11 +480,11 @@ def noun_three(df, lemme, c_lemme_male, c_lemme_fem):
 
 def noun_four(df, lemme):
     # work on a copy of relevant columns
-    rows = df[["ortho", "genre", "nombre"]].copy()
+    rows = df[['ortho', 'genre', 'nombre']].copy()
 
     # count missing fields per row
-    missing_genre_mask = rows["genre"].isna()
-    missing_nombre_mask = rows["nombre"].isna()
+    missing_genre_mask = rows['genre'].isna()
+    missing_nombre_mask = rows['nombre'].isna()
     missing_both_mask = missing_genre_mask & missing_nombre_mask
 
     # total missing counts
@@ -506,16 +500,16 @@ def noun_four(df, lemme):
     if total_missing_both == 1:
         # check that the other three rows have no missing fields
         others = rows[~missing_both_mask]
-        if others["genre"].isna().any() or others["nombre"].isna().any():
+        if others['genre'].isna().any() or others['nombre'].isna().any():
             return None  # Others must be complete
 
         # check others cover 3 distinct (genre,nombre) combos
-        combos = set(zip(others["genre"], others["nombre"]))
+        combos = set(zip(others['genre'], others['nombre']))
         if len(combos) != 3:
             return None  # Not unique combos, can't infer
 
         # determine the missing combo (genre,nombre)
-        expected_combos = {("m", 's'), ("m", "p"), ("f", 's'), ("f", "p")}
+        expected_combos = {('m', 's'), ('m', 'p'), ('f', 's'), ('f', 'p')}
         missing_combo = expected_combos - combos
         if len(missing_combo) != 1:
             return None  # Ambiguous missing combo
@@ -523,8 +517,8 @@ def noun_four(df, lemme):
         missing_genre, missing_nombre = missing_combo.pop()
         # assign missing fields to the missing_both row
         idx = rows[missing_both_mask].index[0]
-        rows.at[idx, "genre"] = missing_genre
-        rows.at[idx, "nombre"] = missing_nombre
+        rows.at[idx, 'genre'] = missing_genre
+        rows.at[idx, 'nombre'] = missing_nombre
 
     else:
         # no rows missing both fields
@@ -533,47 +527,47 @@ def noun_four(df, lemme):
         # infer missing nombre if exactly one missing
         if total_missing_nombre == 1:
             idx = rows[missing_nombre_mask].index[0]
-            existing_nombres = set(rows.loc[~missing_nombre_mask, "nombre"])
-            expected_nombres = {'s', "p"}
+            existing_nombres = set(rows.loc[~missing_nombre_mask, 'nombre'])
+            expected_nombres = {'s', 'p'}
             missing_nombre_values = expected_nombres - existing_nombres
             if len(missing_nombre_values) != 1:
                 return None
-            rows.at[idx, "nombre"] = missing_nombre_values.pop()
+            rows.at[idx, 'nombre'] = missing_nombre_values.pop()
 
         # infer missing genre if exactly one missing
         if total_missing_genre == 1:
             idx = rows[missing_genre_mask].index[0]
-            row_nombre = rows.at[idx, "nombre"]
+            row_nombre = rows.at[idx, 'nombre']
             if row_nombre not in {'s', "p"}:
                 return None  # nombre must be known to infer genre
-            same_nombre_rows = rows[(rows.index != idx) & (rows["nombre"] == row_nombre)]
-            existing_genres = set(same_nombre_rows["genre"].dropna())
-            expected_genres = {"m", "f"}
+            same_nombre_rows = rows[(rows.index != idx) & (rows['nombre'] == row_nombre)]
+            existing_genres = set(same_nombre_rows['genre'].dropna())
+            expected_genres = {'m', 'f'}
             missing_genres = expected_genres - existing_genres
             if len(missing_genres) != 1:
                 return None
-            rows.at[idx, "genre"] = missing_genres.pop()
+            rows.at[idx, 'genre'] = missing_genres.pop()
 
     # after inference, if any genre or nombre is still missing, return None
-    if rows["genre"].isna().any() or rows["nombre"].isna().any():
+    if rows['genre'].isna().any() or rows['nombre'].isna().any():
         return None
 
     # validate that all (genre, nombre) combinations are unique and complete
     combos_seen = set()
     groups = {
-        ("m", 's'): None,
-        ("m", "p"): None,
-        ("f", 's'): None,
-        ("f", "p"): None,
+        ('m', 's'): None,
+        ('m', "p"): None,
+        ('f', 's'): None,
+        ('f', "p"): None,
     }
 
     for _, row in rows.iterrows():
-        key = (row["genre"], row["nombre"])
+        key = (row['genre'], row['nombre'])
         if key not in groups:
             return None  # invalid genre/number combo
         if groups[key] is not None:
             return None  # duplicate combo
-        groups[key] = row["ortho"]
+        groups[key] = row['ortho']
 
     # if any combo missing, return None
     if any(v is None for v in groups.values()):
@@ -594,16 +588,16 @@ def noun_four(df, lemme):
 # None may be passed as NaN
 def find_row(rows, g, n):
     if g is None and n is None:
-        r = rows[(rows["genre"].isna()) & (rows["nombre"].isna())]
+        r = rows[(rows['genre'].isna()) & (rows['nombre'].isna())]
         return r.iloc[0] if not r.empty else None
     elif g is None:
-        r = rows[(rows["genre"].isna()) & (rows["nombre"] == n)]
+        r = rows[(rows['genre'].isna()) & (rows['nombre'] == n)]
         return r.iloc[0] if not r.empty else None
     elif n is None:
-        r = rows[(rows["genre"] == g) & (rows["nombre"].isna())]
+        r = rows[(rows['genre'] == g) & (rows['nombre'].isna())]
         return r.iloc[0] if not r.empty else None
     else:
-        r = rows[(rows["genre"] == g) & (rows["nombre"] == n)]
+        r = rows[(rows['genre'] == g) & (rows['nombre'] == n)]
         return r.iloc[0] if not r.empty else None
 
 
@@ -628,6 +622,7 @@ def apply_contraction(text) -> str:
 
 if __name__ == "__main__":
     main()
+
 
 """
 This comment contains the if-statement that makes sense. I used to some substitution plus
